@@ -1,11 +1,11 @@
 import "dotenv/config";
 import app from "./src/app.js";
-import { closeDatabase, connectToDatabase } from "./src/config/db.js";
+import { closeDatabase, connectDB } from "./src/config/db.js";
 
 const PORT = process.env.PORT || 4000;
 
 try {
-  await connectToDatabase();
+  await connectDB();
   console.log("MongoDB connection verified.");
 
   const server = app.listen(PORT, () => {

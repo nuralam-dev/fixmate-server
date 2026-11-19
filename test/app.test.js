@@ -36,6 +36,20 @@ test("unknown routes and the old unprotected users endpoint return JSON 404", as
   }
 });
 
+test("service POST rejects missing fields before accessing MongoDB", async () => {
+  for (const path of ["/api/services", "/services"]) {
+    for (const body of [null, [], {}, { title: "   " }]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).success, false);
+    }
+  }
+});
+
 test("invalid and oversized JSON return safe errors", async () => {
   for (const [body, status, message] of [
     ['{"broken":', 400, "Invalid JSON body"],

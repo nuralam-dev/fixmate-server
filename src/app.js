@@ -1,24 +1,33 @@
 import cors from "cors";
 import express from "express";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
+import bookingRoutes from "./routes/bookings/routes.js";
 import healthRoutes from "./routes/healthRoutes.js";
+import serviceRoutes from "./routes/services/routes.js";
+import userRoutes from "./routes/users/routes.js";
 
 const app = express();
 
 app.disable("x-powered-by");
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    credentials: true,
+  }),
+);
 app.use(express.json({ limit: "100kb" }));
 
 app.get("/", (req, res) => {
   res.status(200).json({ success: true, message: "FixMate API is running" });
 });
 
-app.use("/api/health", healthRoutes);
+app.use("/health", healthRoutes);
+app.use("/users", userRoutes);
+app.use("/services", serviceRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/bookings", bookingRoutes);
 
-// Business routes will be added in later phases with authentication.
+// Business handlers will be added in later phases with authentication.
 app.use(notFound);
 app.use(errorHandler);
 

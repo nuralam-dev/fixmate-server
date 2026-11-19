@@ -1,41 +1,45 @@
+
+import "dotenv/config";
 import { MongoClient } from "mongodb";
 
-const DATABASE_NAME = "fixmateDB";
-let client;
-let database;
+const DB_NAME = "fixmateDB";
 
-export async function connectToDatabase() {
-  if (database) return database;
+const client = new MongoClient(process.env.MONGODB_URI);
 
-  if (!process.env.MONGODB_URI) {
-    throw new Error("MONGODB_URI is required.");
-  }
+let db = null;
 
-  client = new MongoClient(process.env.MONGODB_URI, {
-    serverSelectionTimeoutMS: 10000,
-  });
+// Connect MongoDB
+export async function connectDB() {
+  await client.connect();
 
-  try {
-    await client.connect();
-    const connectedDatabase = client.db(DATABASE_NAME);
-    await connectedDatabase.command({ ping: 1 });
-    database = connectedDatabase;
-    return database;
-  } catch {
-    await closeDatabase().catch(() => {});
-    throw new Error("MongoDB connection failed.");
-  }
+  db = client.db(DB_NAME);
+
+  // Check database connection
+  await db.command({ ping: 1 });
+
+  console.log("MongoDB connected successfully!");
+
+  return db;
 }
 
-export function getDatabase() {
-  if (!database) throw new Error("Database is not connected.");
-  return database;
+// Get collections
+export function getCollections() {
+  if (!db) {
+    throw new Error("Database is not connected");
+  }
+
+  return {
+    usersCollection: db.collection("users"),
+    servicesCollection: db.collection("services"),
+    bookingsCollection: db.collection("bookings"),
+  };
 }
 
-export async function closeDatabase() {
-  database = undefined;
-  if (client) {
-    await client.close();
-    client = undefined;
-  }
+// Close database connection
+export async function closeDB() {
+  await client.close();
+  db = null;
 }
+
+// Keep the shutdown name used by index.js available.
+export { closeDB as closeDatabase };
