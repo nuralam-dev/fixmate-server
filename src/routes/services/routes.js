@@ -18,6 +18,15 @@ serviceRouter.get("/", async (req, res, next) => {
   }
 });
 
+// Private service reads stay disabled until verified technician identity exists.
+// Keep this static route before /:id; query emails and bearer strings prove nothing.
+serviceRouter.get("/my", (req, res) => {
+  res.status(503).json({
+    success: false,
+    message: "My Services is unavailable until technician authentication is configured.",
+  });
+});
+
 serviceRouter.get("/:id", async (req, res, next) => {
   if (!ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid service ID" });

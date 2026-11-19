@@ -21,11 +21,11 @@ app.get("/", (req, res) => {
   res.status(200).json({ success: true, message: "FixMate API is running" });
 });
 
-app.use("/health", healthRoutes);
-app.use("/users", userRoutes);
-app.use("/services", serviceRoutes);
+app.use("/api/health", healthRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/services", serviceRoutes);
-app.use("/bookings", bookingRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/api/bookings", bookingRoutes);
 
 // Business handlers will be added in later phases with authentication.
 app.use(notFound);

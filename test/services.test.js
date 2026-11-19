@@ -78,7 +78,9 @@ before(async () => {
         insertCalls++;
         if (failInsert) throw new Error("private database connection details");
         savedService = document;
-        return { insertedId: "test-service-id" };
+        const insertedId = new ObjectId();
+        records.push({ ...document, _id: insertedId });
+        return { insertedId };
       },
     }),
   }));
@@ -111,7 +113,7 @@ test("service creation inserts whitelisted fields and server defaults", async ()
   assert.equal(response.status, 201);
   const body = await response.json();
   assert.equal(body.success, true);
-  assert.equal(body.data._id, "test-service-id");
+  assert.ok(ObjectId.isValid(body.data._id));
   assert.equal(savedService.title, "AC repair");
   assert.equal(savedService.basePrice, 50);
   assert.equal(savedService.approvalStatus, "pending");
@@ -225,5 +227,47 @@ test("insertion failures return the existing safe JSON 500 response", async () =
     assert.deepEqual(await response.json(), { success: false, message: "Something went wrong" });
   } finally {
     failInsert = false;
+  }
+});
+
+
+test("private my-services route never trusts supplied identity or accesses MongoDB", async () => {
+  const beforeCalls = readCalls;
+  for (const headers of [{}, { Authorization: "Bearer unverified-token" }]) {
+    const response = await fetch(`${baseUrl}/api/services/my?email=someone@example.com&technicianEmail=someone@example.com&role=technician`, { headers });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(body.success, false);
+    assert.equal(body.data, undefined);
+    assert.match(body.message, /authentication/);
+  }
+  assert.equal(readCalls, beforeCalls);
+});
+
+test("POST-to-public-display flow keeps pending hidden and exposes only approved available records", async () => {
+  const created = await postService({ ...validService, title: "Integrated service flow" });
+  assert.equal(created.status, 201);
+  const { data } = await created.json();
+  const stored = records.find(record => record._id.toString() === data._id);
+  assert.equal(stored.title, "Integrated service flow");
+  assert.equal(stored.approvalStatus, "pending");
+  assert.equal(stored.isAvailable, true);
+  assert.ok(stored.createdAt instanceof Date);
+  assert.ok(!(await (await fetch(`${baseUrl}/api/services`)).json()).data.some(service => service._id === data._id));
+  assert.equal((await fetch(`${baseUrl}/api/services/${data._id}`)).status, 404);
+
+  // Simulate a later admin approval in the driver fixture, never the live database.
+  stored.approvalStatus = "approved";
+  try {
+    const listing = await (await fetch(`${baseUrl}/api/services`)).json();
+    assert.equal(listing.data[0]._id, data._id);
+    const details = await fetch(`${baseUrl}/api/services/${data._id}`);
+    assert.equal(details.status, 200);
+    assert.equal((await details.json()).data.title, stored.title);
+    stored.isAvailable = false;
+    assert.ok(!(await (await fetch(`${baseUrl}/api/services`)).json()).data.some(service => service._id === data._id));
+    assert.equal((await fetch(`${baseUrl}/api/services/${data._id}`)).status, 404);
+  } finally {
+    stored.approvalStatus = "pending";
   }
 });

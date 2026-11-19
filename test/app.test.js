@@ -37,7 +37,7 @@ test("unknown routes and the old unprotected users endpoint return JSON 404", as
 });
 
 test("service POST rejects missing fields before accessing MongoDB", async () => {
-  for (const path of ["/api/services", "/services"]) {
+  for (const path of ["/api/services"]) {
     for (const body of [null, [], {}, { title: "   " }]) {
       const response = await fetch(`${baseUrl}${path}`, {
         method: "POST",

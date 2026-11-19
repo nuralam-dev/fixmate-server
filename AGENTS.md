@@ -291,3 +291,40 @@ remain future work. Stop after the requested phase and wait for user direction.
   verified with driver-stub HTTP tests, not live inserted records.
 - No frontend, auth, database configuration, dependencies, collections, records,
   indexes, PATCH or DELETE handlers were changed or added in this GET phase.
+
+## Technician form and private listing dependency (2026-11-19)
+
+- The current user request authorizes frontend Add Service integration with the
+  existing POST, while deferring new authentication/role middleware. Existing
+  POST validation, pending/true/server-Date defaults, insertOne and 201 response
+  were reused unchanged. Client technician name/email remain unverified metadata.
+- GET /api/services/my is declared before /:id and returns safe JSON 503 with no
+  data/database access until verified technician authentication exists. Neither
+  query email, submitted role nor an unverified Bearer token enables private reads.
+  Future implementation must derive technician identity and role from verified
+  backend auth, filter ownership, include all approval statuses and sort newest.
+- Public list and detail handlers remain approved+available MongoDB queries;
+  list sorting is newest first and details validate ObjectId with absent/hidden
+  records returning 404. New pending services do not appear publicly.
+- Current src/app.js has /api/services mounted twice and only /api-prefixed API
+  mounts; these pre-existing user edits were preserved. The old alias in one POST
+  test was aligned with the actual /api/services endpoint, not restored in the app.
+- Frontend reuses ServiceForm with real creation enabled by server-session name/
+  email props on its existing role-guarded page. Named required fields, Number()
+  price, image URL, exact categories/modes, JSON POST, loading/duplicate-submit
+  protection, error feedback, success/reset and pending-approval message are wired.
+  Image upload/provider is not implemented. Edit preview behavior is preserved.
+- Backend suite passed 18/18 after adding /my no-read and POST-to-public-visibility
+  regression tests. Driver fixtures simulate persistence and later approval; no
+  live database writes or real admin approvals occur in these tests.
+- Live read-only checks passed: public list, POST validation 400, spoofed /my 503,
+  invalid detail ID 400 and absent ID 404. fixmateDB had one existing service and
+  zero approved+available; the public API IDs matched the MongoDB query.
+- Frontend handler fixture tests, TypeScript and scoped ESLint passed. Browser
+  public desktop/mobile empty states and unauthenticated Add Service redirect
+  passed without uncaught exceptions. No logged-in technician browser submission
+  or real MongoDB insertion was performed; do not claim a live write was tested.
+- BetterAuth, database configuration, private environment files, dependencies,
+  unrelated routes, records and indexes were unchanged. Private My Services GET
+  and its actual persisted frontend listing await verified auth. Stop after this
+  phase and wait for the user's next instruction.
