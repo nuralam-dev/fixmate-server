@@ -431,3 +431,82 @@ remain future work. Stop after the requested phase and wait for user direction.
   live Admin mutation/persistence and populated bookings/payments remain untested;
   fixture tests are not claimed as live browser workflows. See frontend AGENTS.md
   for component/bridge details and observations of independently changing services.
+
+## Customer Dashboard Phase 1 (2026-11-20)
+
+- Latest request requires ordered/verified phases and approval for necessary DB
+  schema changes. Implemented only Phase 1 GET /api/customer/overview, via new
+  src/routes/customer/routes.js mounted in src/app.js. It uses unchanged
+  verifyToken + requireRole("customer"), trusted req.user.email and the existing
+  bookings collection; every query filters customerEmail. No DB writes.
+- Four counts: all owned bookings, requested, accepted/in-progress, completed.
+  Recent five: createdAt/_id descending, projected _id/serviceTitle/preferredDate/
+  status/createdAt only. Empty returns zeros/[]. Private/no-store, safe errors and
+  401/403 denials remain. Caller-supplied customer identity and role are ignored.
+- Added test/customer-overview.test.js (8 HTTP auth/driver fixture tests). Full
+  npm test 96/96 passed including all old workflows. New tests cover ownership,
+  count groups, newest five, projections/missing data, empty, auth/DB failure,
+  spoofing, no writes and fresh reads after technician changes.
+- Frontend Customer overview now uses live API statistics/recent rows/refresh and
+  links, existing role guard/welcome/components. Actual-source browser fixture
+  passed 33 checks and live guest/regression smoke passed six. Full lint,
+  TypeScript after route type generation, build (32 pages), backend existing
+  syntax plus new route/test checks and whitespace checks pass.
+- Read-only metadata: fixmateDB.bookings exists with zero documents, only _id
+  index, no persisted serviceId schema. Topology supports transactions. Stripe
+  dependency/routes/configuration are absent. No records/indexes/collections,
+  env values, auth configuration or dependencies changed.
+- Stop before Phase 2 pending explicit approval of unique partial booking index
+  (customerEmail/serviceId for requested/accepted/in-progress) plus transaction
+  coordination with existing service deletion. Do not use check-then-insert as
+  concurrent protection. Latest requested finalAmount default is null, not the
+  historical basePrice default. Creation/list/cancel, remaining Technician
+  transitions and Stripe/payment work are not implemented by this phase.
+  Existing shared Profile supports name/image only. See frontend AGENTS.md for
+  remaining prerequisites; report partial completion and await authorization.
+
+
+## Service booking authentication and creation (2026-11-20)
+
+- Latest request authorizes the Service Details login/form integration and secure
+  Customer POST /api/bookings, superseding earlier missing-POST/Phase 2 notes.
+  Existing GET /my, cancel, Technician and Admin behavior is preserved.
+- Root redirect fault was the frontend's unconditional /sign-in booking link;
+  login always used /. BetterAuth configuration/verifyToken/requireRole are
+  unchanged. Frontend now waits for session loading, opens a Customer form,
+  distinguishes other roles and safely returns guests to /services/:id after login.
+- POST uses verifyToken + requireRole("customer"), strict five-field validation,
+  native ObjectId and non-past calendar date checks. Identity comes from req.user;
+  service snapshot/price/provider come from approved+available MongoDB data.
+  Defaults requested/unpaid/finalAmount:null, server dates, canonical String
+  serviceId and BSON preferredDate. No submitted identity/role/amount is trusted.
+- User approved setup-booking-index.js through the tool approval: unique partial
+  bookings index {customerEmail:1,serviceId:1} for requested/accepted/in-progress,
+  name unique_active_customer_service. Run node scripts/setup-booking-index.js
+  from this backend directory when deploying another database. No startup index
+  writes. POST returns safe 503 if the exact required index is missing and 409
+  for duplicate active bookings. No new collection or auth system introduced.
+- db.js exports withDatabaseTransaction using the existing client/session.
+  Creation increments internal services.bookingRevision then inserts booking in
+  one transaction. Existing service deletion now checks references/deletes within
+  a transaction; conflicting creation/deletion or availability changes retry and
+  preserve references. Prior ownership/history/status rules remain. Duplicate or
+  failed inserts roll back the service counter. No actual records backfilled.
+- New test/booking-create.test.js adds 12 HTTP driver/session fixture tests;
+  service reference tests now assert session use. Full npm test passed 119/119:
+  snapshots/defaults, own/assigned lists, validation/auth/roles/errors, index gate,
+  concurrent/processed duplicates, cancellation/rebooking and rollback. All prior
+  Customer/Technician/Admin/Services regressions pass. New test/script syntax and
+  existing npm run check/whitespace checks passed.
+- Installed real BetterAuth memory-adapter/signed-cookie fixture passed 15 checks;
+  actual-source frontend browser fixture passed 33 plus three real guest browser
+  checks (36 total); live guest/API smoke checks passed 12. No successful live
+  auth or booking write was made by these tests. See frontend AGENTS.md for details.
+- Read-only MongoDB inspection initially found zero bookings. Setup created only
+  the approved index. Later an independently created booking was observed with
+  correct field types/defaults, matching snapshot/Customer ownership and service
+  counter=1. That record's stored provider currently has Admin role, so it cannot
+  use Technician APIs without an authorized role change. No role was changed.
+  Signed-in live Technician display and tool-driven live creation remain untested.
+- No dependencies, environment/auth configuration, Admin mutations, payments or
+  unrelated features were added. Preserve earlier uncommitted Customer work.

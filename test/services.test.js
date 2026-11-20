@@ -135,7 +135,8 @@ before(async () => {
         if (name === "bookings" || name === "payments") {
           relationReads++;
           if (failRelations) throw new Error("private relation database details");
-          assert.deepEqual(options, { projection: { _id: 1 } });
+          assert.ok(options.session);
+          assert.deepEqual(options.projection, { _id: 1 });
           assert.ok(filter.serviceId.$in.some(id => id instanceof ObjectId));
           assert.ok(filter.serviceId.$in.some(id => typeof id === "string"));
           const source = name === "bookings" ? bookingRecords : paymentRecords;

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { ObjectId } from "mongodb";
-import { getCollections } from "../../config/db.js";
+import { getCollections, withDatabaseTransaction } from "../../config/db.js";
 
 import { verifyToken } from "../../middleware/verifyToken.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -202,40 +202,30 @@ serviceRouter.delete("/:id", verifyToken, requireRole("technician"), async (req,
     const { servicesCollection, bookingsCollection, paymentsCollection } = getCollections();
     const serviceId = new ObjectId(req.params.id);
     const owner = { _id: serviceId, technicianEmail: req.user.email };
-    const service = await servicesCollection.findOne(owner);
-    if (!service) {
-      return res.status(404).json({ success: false, message: "Service not found" });
-    }
+    const outcome = await withDatabaseTransaction(async session => {
+      const service = await servicesCollection.findOne(owner, { session });
+      if (!service) return { status: 404, message: "Service not found" };
 
-    // No persisted booking schema exists yet. Support both common reference types.
-    const reference = { serviceId: { $in: [serviceId, serviceId.toHexString(), req.params.id] } };
-    const activeBooking = await bookingsCollection.findOne({
-      ...reference,
-      status: { $in: ["requested", "accepted", "in-progress"] },
-    }, { projection: { _id: 1 } });
-    if (activeBooking) {
-      return res.status(409).json({
-        success: false,
-        message: "Cannot delete this service because it has active bookings.",
-      });
-    }
-
-    // Keep references intact until a booking history/snapshot contract is implemented.
-    // Payments linked through bookingId are protected by retaining every booking.
-    const historicalBooking = await bookingsCollection.findOne(reference, { projection: { _id: 1 } });
-    const directPayment = await paymentsCollection.findOne(reference, { projection: { _id: 1 } });
-    if (historicalBooking || directPayment) {
-      return res.status(409).json({
-        success: false,
-        message: "Cannot delete this service because it has booking or payment history. You can make it unavailable instead.",
-      });
-    }
-
-    const result = await servicesCollection.deleteOne(owner);
-    if (result.deletedCount !== 1) {
-      return res.status(404).json({ success: false, message: "Service not found" });
-    }
-    res.status(200).json({ success: true, message: "Service deleted successfully" });
+      // Read references and delete in one snapshot. Booking creation writes this
+      // same service, so a concurrent create/delete must retry instead of orphaning it.
+      const reference = { serviceId: { $in: [serviceId, serviceId.toHexString(), req.params.id] } };
+      const activeBooking = await bookingsCollection.findOne({
+        ...reference, status: { $in: ["requested", "accepted", "in-progress"] },
+      }, { projection: { _id: 1 }, session });
+      if (activeBooking) return {
+        status: 409, message: "Cannot delete this service because it has active bookings.",
+      };
+      const historicalBooking = await bookingsCollection.findOne(reference, { projection: { _id: 1 }, session });
+      const directPayment = await paymentsCollection.findOne(reference, { projection: { _id: 1 }, session });
+      if (historicalBooking || directPayment) return {
+        status: 409, message: "Cannot delete this service because it has booking or payment history. You can make it unavailable instead.",
+      };
+      const result = await servicesCollection.deleteOne(owner, { session });
+      return result.deletedCount === 1
+        ? { status: 200, message: "Service deleted successfully" }
+        : { status: 404, message: "Service not found" };
+    });
+    res.status(outcome.status).json({ success: outcome.status === 200, message: outcome.message });
   } catch (error) {
     next(error);
   }

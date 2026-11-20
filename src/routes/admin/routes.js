@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { paymentProjection, paymentReport } from "../../config/payments.js";
 import { ObjectId } from "mongodb";
 import { getCollections } from "../../config/db.js";
 import { verifyToken } from "../../middleware/verifyToken.js";
@@ -84,34 +85,11 @@ const bookingProjection = Object.fromEntries(
     "createdAt",
   ].map((field) => [field, 1]),
 );
-const paymentProjection = Object.fromEntries(
-  [
-    "_id",
-    "bookingId",
-    "serviceTitle",
-    "customerName",
-    "customerEmail",
-    "technicianName",
-    "technicianEmail",
-    "amount",
-    "currency",
-    "transactionId",
-    "stripeSessionId",
-    "paymentStatus",
-    "paidAt",
-  ].map((field) => [field, 1]),
-);
 const newest = { createdAt: -1, _id: -1 };
 
-// No Stripe/webhook producer exists. Stored status alone is not payment proof.
-// Enable verified revenue only alongside an audited server-side payment integration.
 function paymentSummary() {
-  return {
-    verificationAvailable: false,
-    revenue: [],
-    dependency:
-      "Stripe payment verification is not implemented. Records are read-only; verified revenue is unavailable.",
-  };
+  const { records, ...summary } = paymentReport();
+  return summary;
 }
 
 router.get(
@@ -319,7 +297,7 @@ router.get(
       res.json({
         success: true,
         message: "Payment records fetched successfully",
-        data: { records, ...paymentSummary() },
+        data: paymentReport(records),
       });
     } catch (error) {
       next(error);

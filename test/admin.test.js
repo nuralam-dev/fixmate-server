@@ -213,7 +213,7 @@ test("overview empty collections return exact zeros and no claimed revenue", asy
   assert.deepEqual(result.latestServices, []);
   assert.deepEqual(result.latestBookings, []);
   assert.equal(result.paymentRecordCount, 0);
-  assert.equal(result.payments.verificationAvailable, false);
+  assert.equal(result.payments.verificationAvailable, true);
   assert.deepEqual(result.payments.revenue, []);
 });
 test("overview counts exact status groups and latest five by createdAt; completion is not payment", async () => {
@@ -394,10 +394,10 @@ test("bookings are newest first, read-only, project only existing business field
     404,
   );
 });
-test("payments empty and stored paid/mixed currencies never become verified revenue without Stripe", async () => {
+test("payments empty and stored paid/mixed currencies never become verified revenue without verified Stripe evidence", async () => {
   let report = (await (await request("payments")).json()).data;
   assert.deepEqual(report.records, []);
-  assert.equal(report.verificationAvailable, false);
+  assert.equal(report.verificationAvailable, true);
   data.payments = ["usd", "bdt"].map((currency, i) => ({
     _id: new ObjectId(),
     amount: 25 + i,
@@ -412,7 +412,7 @@ test("payments empty and stored paid/mixed currencies never become verified reve
   assert.equal(report.records[0].currency, "bdt");
   assert.equal(report.records[0].privateSecret, undefined);
   assert.deepEqual(report.revenue, []);
-  assert.equal(report.verificationAvailable, false);
+  assert.equal(report.verificationAvailable, true);
   assert.equal(writes, 0);
 });
 test("all reads and role mutation hide database errors", async () => {

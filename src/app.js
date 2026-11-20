@@ -8,6 +8,9 @@ import userRoutes from "./routes/users/routes.js";
 
 import technicianRoutes from "./routes/technician/routes.js";
 import adminRoutes from "./routes/admin/routes.js";
+import customerRoutes from "./routes/customer/routes.js";
+import paymentRoutes from "./routes/payments/routes.js";
+import { stripeWebhook } from "./config/payments.js";
 
 const app = express();
 
@@ -18,6 +21,7 @@ app.use(
     credentials: true,
   }),
 );
+app.post("/api/payments/webhook", express.raw({ type: "application/json", limit: "100kb" }), stripeWebhook);
 app.use(express.json({ limit: "100kb" }));
 
 app.get("/", (req, res) => {
@@ -31,6 +35,8 @@ app.use("/api/services", serviceRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/technician", technicianRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/customer", customerRoutes);
+app.use("/api/payments", paymentRoutes);
 
 // Business handlers will be added in later phases with authentication.
 app.use(notFound);

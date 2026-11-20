@@ -44,3 +44,8 @@ export async function closeDB() {
 
 // Keep the shutdown name used by index.js available.
 export { closeDB as closeDatabase };
+
+// Share one session across service and booking writes; retries are handled by MongoDB.
+export async function withDatabaseTransaction(work) {
+  return client.withSession(session => session.withTransaction(() => work(session)));
+}
