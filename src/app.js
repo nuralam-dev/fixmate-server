@@ -11,6 +11,12 @@ import adminRoutes from "./routes/admin/routes.js";
 import customerRoutes from "./routes/customer/routes.js";
 import paymentRoutes from "./routes/payments/routes.js";
 import { stripeWebhook } from "./config/payments.js";
+import { connectDB } from "./config/db.js";
+
+// Vercel loads this module directly instead of running index.js.
+if (process.env.VERCEL) {
+  await connectDB();
+}
 
 const app = express();
 
