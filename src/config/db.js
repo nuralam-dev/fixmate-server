@@ -32,6 +32,7 @@ export function getCollections() {
     usersCollection: db.collection("users"),
     servicesCollection: db.collection("services"),
     bookingsCollection: db.collection("bookings"),
+    paymentsCollection: db.collection("payments"),
   };
 }
 

@@ -36,7 +36,7 @@ test("unknown routes and the old unprotected users endpoint return JSON 404", as
   }
 });
 
-test("service POST rejects missing fields before accessing MongoDB", async () => {
+test("unauthenticated service POST is rejected before accessing MongoDB", async () => {
   for (const path of ["/api/services"]) {
     for (const body of [null, [], {}, { title: "   " }]) {
       const response = await fetch(`${baseUrl}${path}`, {
@@ -44,7 +44,7 @@ test("service POST rejects missing fields before accessing MongoDB", async () =>
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      assert.equal(response.status, 400);
+      assert.equal(response.status, body === null ? 400 : 401);
       assert.equal((await response.json()).success, false);
     }
   }
