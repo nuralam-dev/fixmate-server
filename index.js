@@ -37,3 +37,4 @@ try {
   await closeDatabase().catch(() => {});
   process.exitCode = 1;
 }
+export default app;
