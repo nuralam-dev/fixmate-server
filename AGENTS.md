@@ -328,3 +328,106 @@ remain future work. Stop after the requested phase and wait for user direction.
   unrelated routes, records and indexes were unchanged. Private My Services GET
   and its actual persisted frontend listing await verified auth. Stop after this
   phase and wait for the user's next instruction.
+
+## Technician booking requests: Accept/Reject (2026-11-20)
+
+- This later request authorizes GET `/api/bookings/technician` and PATCH
+  `/api/bookings/:id/status`. It supersedes earlier empty-router notes only for
+  these handlers. Customer Booking POST is still missing; do not add it implicitly.
+- Read-only live MongoDB inspection confirmed `fixmateDB.bookings` exists and
+  contains zero documents. There is no live booking schema or serviceId type to
+  verify. No real records, auth configuration, collections or indexes changed.
+- Both handlers reuse existing BetterAuth cookie-session `verifyToken` followed
+  by `requireRole("technician")`. GET filters only req.user.email, ignores submitted
+  ownership, includes every status and sorts createdAt/_id descending.
+- PATCH accepts only `{status:"accepted"|"rejected"}`, validates ObjectId, and uses
+  atomic findOneAndUpdate with `_id`, verified technicianEmail and status=requested.
+  Only status/updatedAt change. Updated document is returned. A follow-up
+  owner-scoped lookup distinguishes missing/unowned 404 from already-processed 409
+  without disclosing another technician's booking. Repeated or concurrent actions
+  cannot both change the same requested booking. Existing error handling remains.
+- Added `test/bookings.test.js`: 11 tests with HTTP session fixtures and MongoDB
+  driver stubs, no live writes. Full npm test passed 54/54 including existing
+  service CRUD regressions. Existing syntax checks plus the new test syntax pass.
+- Frontend reuses its existing cookie bridge, role guard, cards/tabs, AlertDialog
+  and Sonner. Isolated actual-source browser fixtures passed 35 checks; nine live
+  guest/API smoke checks passed. Full frontend lint, TypeScript and build pass.
+  These are not live signed-in booking-persistence tests. Customer creation is a
+  reported dependency, not implemented in this scope. Await the next instruction.
+
+## Admin service review (2026-11-20)
+
+- Latest request authorizes GET `/api/admin/services` and PATCH
+  `/api/admin/services/:id/approval` only, via `src/routes/admin/routes.js` and the
+  new `/api/admin` mount. Existing technician/public Service CRUD and Booking/
+  overview routes, database configuration and auth middleware remain unchanged.
+- Both endpoints use verifyToken and requireRole("admin"). GET returns every
+  service state newest first (createdAt/_id descending), empty [], existing JSON
+  format and private/no-store. Incoming role, email and status query are not auth.
+- PATCH accepts exactly `{approvalStatus:"approved"|"rejected"}`, validates ObjectId,
+  atomically filters `_id` + approvalStatus=pending, updates only approvalStatus/
+  updatedAt and returns the updated record. Availability never changes. Missing
+  404, reviewed 409, invalid input 400, missing/invalid auth 401, non-admin 403.
+  Existing safe auth-service/DB failures and duplicate/race protection remain.
+- Added `test/admin-services.test.js`: 13 new HTTP tests using auth fixtures and
+  driver stubs. Full npm test passed 75/75 including earlier Service CRUD, Booking
+  and overview regressions. Tests cover public/owner visibility after real route
+  fixture creation and review, unavailable approval, rejection, field preservation,
+  role/session denials, invalid payloads/IDs, 404/409, races, empty and safe failures.
+- Frontend uses existing cookie bridge, guarded Admin page, new AdminServices live
+  cards, local status filters, confirmed Approve, AlertDialog Reject and Sonner.
+  Actual-source isolated browser fixture passed 43 checks; ten live production/
+  guest smoke checks passed. Full frontend lint, TypeScript, production build and
+  existing backend syntax plus new route/test and whitespace checks pass.
+- Read-only live inspection found fixmateDB.services has 2 pending available and
+  1 approved available. MongoDB/API IDs, live homepage public links and details
+  200/404 visibility matched. No real service/user records or env/auth settings
+  were modified. Signed-in live Admin review remains untested; persistence tests
+  use safe driver fixtures only. No new collections, indexes or dependencies.
+
+
+## Complete Admin Dashboard (2026-11-20)
+
+- The latest request authorizes the full Admin backend/frontend integration.
+  Extended the existing Admin router with GET /api/admin/overview, /users,
+  /bookings, /payments and PATCH /users/:id/role; existing services list and
+  atomic pending-only approval/rejection remain unchanged. Every endpoint uses
+  existing verifyToken and requireRole("admin"), trusted BetterAuth database
+  sessions/current roles, private/no-store and safe errors. No second auth system.
+- Corrected usersCollection to singular physical user, preserving BetterAuth
+  identity/account/session relationships. Booking test handle whitelist now
+  expects user; booking handler behavior is unchanged. No new collections,
+  indexes, schemas, secrets, dependencies or real records were changed.
+- Overview reads eight actual MongoDB counts (active=accepted/in-progress),
+  latest five submissions/bookings by createdAt/_id descending, safe projections,
+  and existing payment count. Empty counts return zero. No completed-booking or
+  unverified-payment amount is reported as revenue.
+- Users list projects only safe profile/role/date fields. Role PATCH accepts
+  exactly customer/technician, validates ObjectId, blocks self role changes,
+  public admin promotion and existing-admin demotion, and atomically restricts
+  current roles to customer/technician. Only role/updatedAt change.
+- Admin bookings are read-only and newest first, projecting existing business
+  fields. No Admin booking-status mutation or Customer creation API was added.
+- Payments are read-only; no Stripe/webhook/verified producer exists. Existing
+  records are projected/sorted if present; response includes verificationAvailable
+  false, revenue [], and a dependency explanation. Stored status alone is never
+  trusted proof, and currencies are never combined. Reading absent payments
+  does not create it. Later verified revenue needs an audited payment integration.
+- Profile reuses the frontend's existing BetterAuth update-user endpoint for
+  name/image only; email/role stay protected. No duplicate profile API or new
+  unsupported phone/area/bio schema was introduced.
+- Added test/admin.test.js (13 tests). Full npm test passed 88/88 including
+  existing services/booking/technician/approval regressions. Auth and MongoDB
+  driver fixtures exercise all new endpoints, exact counts/latest-five/empty,
+  projections, singular user, role updates/denials, mixed currency and no fake
+  verification, auth/database failures and read-only behavior. Overview prepares
+  cursors before launching counts to avoid unhandled rejection on sync errors.
+- Frontend actual-source browser fixtures passed 68 checks, installed BetterAuth
+  memory profile checks passed 10, and live guest/production/startup checks passed
+  24. Actual index.js connected/pinged MongoDB on an isolated port, then stopped.
+  Frontend lint/TypeScript/build (31 pages), backend syntax and whitespace pass.
+- Read-only live inspection found user/services/bookings, 3 users/3 services,
+  zero bookings and no payments collection. No live writes were made. Signed-in
+  live Admin mutation/persistence and populated bookings/payments remain untested;
+  fixture tests are not claimed as live browser workflows. See frontend AGENTS.md
+  for component/bridge details and observations of independently changing services.

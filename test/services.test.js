@@ -26,6 +26,14 @@ let updateCalls = 0;
 let updateWrites = 0;
 let lastUpdate;
 let failUpdate = false;
+let bookingRecords = [];
+let paymentRecords = [];
+let relationReads = 0;
+let deleteCalls = 0;
+let lastDelete;
+let failDelete = false;
+let failRelations = false;
+let disappearBeforeDelete = false;
 
 const publicOlder = {
   _id: new ObjectId(), title: "Older public service", approvalStatus: "approved",
@@ -50,6 +58,15 @@ function matches(record, filter) {
   return Object.entries(filter).every(([key, value]) => {
     if (key === "$or") return value.some(condition => matches(record, condition));
     if (key === "_id") return record._id.equals(value);
+    if (value && typeof value === "object" && Object.hasOwn(value, "$in")) {
+      return value.$in.some(candidate => {
+        const actual = record[key];
+        if (actual instanceof ObjectId || candidate instanceof ObjectId) {
+          return actual instanceof ObjectId && candidate instanceof ObjectId && actual.equals(candidate);
+        }
+        return actual === candidate;
+      });
+    }
     if (value && typeof value === "object" && Object.hasOwn(value, "$ne")) return record[key] !== value.$ne;
     return record[key] === value;
   });
@@ -114,7 +131,16 @@ before(async () => {
           },
         }),
       }),
-      findOne: async (filter) => {
+      findOne: async (filter, options) => {
+        if (name === "bookings" || name === "payments") {
+          relationReads++;
+          if (failRelations) throw new Error("private relation database details");
+          assert.deepEqual(options, { projection: { _id: 1 } });
+          assert.ok(filter.serviceId.$in.some(id => id instanceof ObjectId));
+          assert.ok(filter.serviceId.$in.some(id => typeof id === "string"));
+          const source = name === "bookings" ? bookingRecords : paymentRecords;
+          return source.find(record => matches(record, filter)) || null;
+        }
         assert.equal(name, "services");
         assert.ok(filter._id instanceof ObjectId);
         return findMatchingServices(filter)[0] || null;
@@ -133,6 +159,19 @@ before(async () => {
         Object.assign(record, update.$set);
         updateWrites++;
         return { ...record };
+      },
+      deleteOne: async (filter) => {
+        assert.equal(name, "services", "Booking/payment deletes must never occur");
+        assert.ok(filter._id instanceof ObjectId);
+        assert.ok(filter.technicianEmail);
+        assert.deepEqual(Object.keys(filter).sort(), ["_id", "technicianEmail"]);
+        lastDelete = filter;
+        deleteCalls++;
+        if (failDelete) throw new Error("private deletion database details");
+        const index = records.findIndex(record => matches(record, filter));
+        if (index < 0) return { deletedCount: 0 };
+        records.splice(index, 1);
+        return { deletedCount: disappearBeforeDelete ? 0 : 1 };
       },
       insertOne: async (document) => {
         assert.equal(name, "services");
@@ -597,4 +636,166 @@ test("PATCH database failures return safe existing 500 responses", async () => {
       assert.deepEqual(await response.json(), { success: false, message: "Something went wrong" });
     }
   } finally { failUpdate = false; }
+});
+
+
+function deleteService(id, identity = "a", extra = "") {
+  return fetch(`${baseUrl}/api/services/${id}${extra}`, {
+    method: "DELETE",
+    headers: { ...(identity ? { Cookie: `fixture=${identity}` } : {}), "Content-Type": "application/json" },
+    body: JSON.stringify({ technicianEmail: identities.b.email, role: "admin" }),
+  });
+}
+
+test("DELETE removes only an eligible owned service and ignores submitted ownership", async () => {
+  const stored = await ownedFixture();
+  const survivor = await ownedFixture();
+  const response = await deleteService(stored._id, "a", "?technicianEmail=b@example.com&role=admin");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { success: true, message: "Service deleted successfully" });
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(records.some(record => record._id.equals(stored._id)), false);
+  assert.equal(records.some(record => record._id.equals(survivor._id)), true);
+  assert.equal(lastDelete.technicianEmail, identities.a.email);
+  const mine = await fetch(`${baseUrl}/api/services/my`, { headers: { Cookie: "fixture=a" } });
+  assert.ok(!(await mine.json()).data.some(service => service._id === String(stored._id)));
+  const publicList = await fetch(`${baseUrl}/api/services`);
+  assert.ok(!(await publicList.json()).data.some(service => service._id === String(stored._id)));
+  assert.equal((await fetch(`${baseUrl}/api/services/${stored._id}`)).status, 404);
+});
+
+test("DELETE denies missing/invalid sessions and customer/admin roles without database work", async () => {
+  const stored = await ownedFixture();
+  const beforeReads = readCalls;
+  const beforeRelations = relationReads;
+  const beforeDeletes = deleteCalls;
+  for (const [identity, expected] of [[null, 401], ["invalid", 401], ["expired", 401], ["mismatch", 401], ["customer", 403], ["admin", 403]]) {
+    const response = await deleteService(stored._id, identity);
+    assert.equal(response.status, expected);
+    assert.equal((await response.json()).success, false);
+  }
+  assert.equal(readCalls, beforeReads);
+  assert.equal(relationReads, beforeRelations);
+  assert.equal(deleteCalls, beforeDeletes);
+});
+
+test("DELETE returns 404 for another owner's service and unknown ID without revealing bookings", async () => {
+  const stored = await ownedFixture();
+  const beforeRelations = relationReads;
+  const beforeDeletes = deleteCalls;
+  for (const id of [stored._id, new ObjectId()]) {
+    const response = await deleteService(id, "b", "?technicianEmail=a@example.com");
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { success: false, message: "Service not found" });
+  }
+  assert.equal(relationReads, beforeRelations);
+  assert.equal(deleteCalls, beforeDeletes);
+  assert.ok(records.includes(stored));
+});
+
+test("DELETE invalid IDs return 400 before service or relation reads", async () => {
+  const beforeReads = readCalls;
+  const beforeRelations = relationReads;
+  for (const id of ["invalid", "my", "a".repeat(23), "z".repeat(24)]) {
+    assert.equal((await deleteService(id)).status, 400);
+  }
+  assert.equal(readCalls, beforeReads);
+  assert.equal(relationReads, beforeRelations);
+});
+
+test("DELETE blocks each active booking status with exact 409 message for String and ObjectId references", async () => {
+  const stored = await ownedFixture();
+  const beforeDeletes = deleteCalls;
+  try {
+    for (const serviceId of [String(stored._id), stored._id]) {
+      for (const status of ["requested", "accepted", "in-progress"]) {
+        bookingRecords = [{ _id: new ObjectId(), serviceId, status, problemDescription: "Keep unchanged" }];
+        const original = structuredClone(bookingRecords.map(record => ({ ...record, _id: String(record._id), serviceId: String(record.serviceId) })));
+        const response = await deleteService(stored._id);
+        assert.equal(response.status, 409);
+        assert.deepEqual(await response.json(), { success: false, message: "Cannot delete this service because it has active bookings." });
+        assert.deepEqual(bookingRecords.map(record => ({ ...record, _id: String(record._id), serviceId: String(record.serviceId) })), original);
+        assert.ok(records.includes(stored));
+      }
+    }
+  } finally { bookingRecords = []; }
+  assert.equal(deleteCalls, beforeDeletes);
+});
+
+test("DELETE preserves historical bookings and linked payments instead of deleting referenced services", async () => {
+  const stored = await ownedFixture();
+  const beforeDeletes = deleteCalls;
+  try {
+    for (const serviceId of [String(stored._id), stored._id]) {
+      for (const status of ["completed", "rejected", "cancelled", "unknown"]) {
+        bookingRecords = [{ _id: new ObjectId(), serviceId, status }];
+        paymentRecords = [{ _id: new ObjectId(), bookingId: bookingRecords[0]._id, paymentStatus: "paid", amount: 50 }];
+        const originalBookings = JSON.stringify(bookingRecords);
+        const originalPayments = JSON.stringify(paymentRecords);
+        const response = await deleteService(stored._id);
+        assert.equal(response.status, 409);
+        assert.match((await response.json()).message, /booking or payment history/);
+        assert.equal(JSON.stringify(bookingRecords), originalBookings);
+        assert.equal(JSON.stringify(paymentRecords), originalPayments);
+        assert.ok(records.includes(stored));
+      }
+    }
+  } finally { bookingRecords = []; paymentRecords = []; }
+  assert.equal(deleteCalls, beforeDeletes);
+});
+
+test("DELETE protects direct service-linked payment history for both reference types", async () => {
+  const stored = await ownedFixture();
+  const beforeDeletes = deleteCalls;
+  try {
+    for (const serviceId of [String(stored._id), stored._id]) {
+      paymentRecords = [{ _id: new ObjectId(), serviceId, paymentStatus: "paid" }];
+      const original = JSON.stringify(paymentRecords);
+      const response = await deleteService(stored._id);
+      assert.equal(response.status, 409);
+      assert.match((await response.json()).message, /payment history/);
+      assert.equal(JSON.stringify(paymentRecords), original);
+    }
+  } finally { paymentRecords = []; }
+  assert.equal(deleteCalls, beforeDeletes);
+});
+
+test("DELETE does not block unrelated bookings/payments or mutate their data", async () => {
+  const stored = await ownedFixture();
+  bookingRecords = [{ _id: new ObjectId(), serviceId: new ObjectId(), status: "requested" }];
+  paymentRecords = [{ _id: new ObjectId(), serviceId: String(new ObjectId()), paymentStatus: "paid" }];
+  const originalBookings = JSON.stringify(bookingRecords);
+  const originalPayments = JSON.stringify(paymentRecords);
+  try {
+    assert.equal((await deleteService(stored._id)).status, 200);
+    assert.equal(JSON.stringify(bookingRecords), originalBookings);
+    assert.equal(JSON.stringify(paymentRecords), originalPayments);
+  } finally { bookingRecords = []; paymentRecords = []; }
+});
+
+test("DELETE respects deletedCount and repeated requests cannot delete twice", async () => {
+  const stored = await ownedFixture();
+  assert.equal((await deleteService(stored._id)).status, 200);
+  const beforeDeletes = deleteCalls;
+  assert.equal((await deleteService(stored._id)).status, 404);
+  assert.equal(deleteCalls, beforeDeletes);
+  const other = await ownedFixture();
+  disappearBeforeDelete = true;
+  try { assert.equal((await deleteService(other._id)).status, 404); }
+  finally { disappearBeforeDelete = false; }
+});
+
+test("DELETE database/relation errors fail closed with safe JSON and no booking/payment mutations", async () => {
+  const stored = await ownedFixture();
+  for (const failure of ["read", "relations", "delete"]) {
+    failRead = failure === "read";
+    failRelations = failure === "relations";
+    failDelete = failure === "delete";
+    try {
+      const response = await deleteService(stored._id);
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { success: false, message: "Something went wrong" });
+      assert.ok(records.includes(stored));
+    } finally { failRead = false; failRelations = false; failDelete = false; }
+  }
 });

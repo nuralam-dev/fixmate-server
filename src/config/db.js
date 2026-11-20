@@ -29,7 +29,7 @@ export function getCollections() {
   }
 
   return {
-    usersCollection: db.collection("users"),
+    usersCollection: db.collection("user"),
     servicesCollection: db.collection("services"),
     bookingsCollection: db.collection("bookings"),
     paymentsCollection: db.collection("payments"),

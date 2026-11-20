@@ -6,6 +6,9 @@ import healthRoutes from "./routes/healthRoutes.js";
 import serviceRoutes from "./routes/services/routes.js";
 import userRoutes from "./routes/users/routes.js";
 
+import technicianRoutes from "./routes/technician/routes.js";
+import adminRoutes from "./routes/admin/routes.js";
+
 const app = express();
 
 app.disable("x-powered-by");
@@ -26,6 +29,8 @@ app.use("/api/users", userRoutes);
 app.use("/api/services", serviceRoutes);
 app.use("/api/services", serviceRoutes);
 app.use("/api/bookings", bookingRoutes);
+app.use("/api/technician", technicianRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Business handlers will be added in later phases with authentication.
 app.use(notFound);
