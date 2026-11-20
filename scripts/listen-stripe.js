@@ -7,7 +7,7 @@ if (!process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_")) {
   process.exit(1);
 }
 // Use the backend's test account for forwarding; never put an API key in argv.
-const child = spawn("stripe", ["listen", "--forward-to", "localhost:4000/api/payments/webhook"], {
+const child = spawn("stripe", ["listen", "--events", "checkout.session.completed,checkout.session.async_payment_succeeded", "--forward-to", "localhost:4000/api/payments/webhook"], {
   env: { ...process.env, STRIPE_API_KEY: process.env.STRIPE_SECRET_KEY }, stdio: ["ignore", "pipe", "pipe"],
 });
 let received = false;

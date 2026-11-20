@@ -63,11 +63,11 @@ before(async () => {
         findOneAndUpdate: async (filter, update, options) => {
           access();
           assert.deepEqual(Object.keys(filter).sort(), ["_id", "status", "technicianEmail"]);
-          assert.equal(filter.status, "requested");
+          assert.equal(filter.status, { accepted: "requested", rejected: "requested", "in-progress": "accepted", completed: "in-progress" }[update.$set.status]);
           assert.ok(filter._id instanceof ObjectId);
           assert.deepEqual(options, { returnDocument: "after" });
           assert.deepEqual(Object.keys(update), ["$set"]);
-          assert.deepEqual(Object.keys(update.$set).sort(), ["status", "updatedAt"]);
+          assert.deepEqual(Object.keys(update.$set).sort(), update.$set.status === "completed" ? ["finalAmount", "status", "updatedAt"] : ["status", "updatedAt"]);
           assert.ok(update.$set.updatedAt instanceof Date);
           const record = records.find(record => matches(record, filter));
           if (!record) return null;
@@ -161,8 +161,8 @@ test("PATCH rejects invalid IDs and payloads before DB access", async () => {
   for (const invalid of ["bad", "123", "g".repeat(24)]) {
     assert.equal((await request("PATCH", "a", { status: "accepted" }, `/${invalid}/status`)).status, 400);
   }
-  for (const body of [null, [], {}, { status: "requested" }, { status: "in-progress" }, { status: "completed" },
-    { status: "cancelled" }, { status: "Accepted" }, { status: 1 }, { status: "accepted", technicianEmail: identities.b.email },
+  for (const body of [null, [], {}, { status: "requested" }, { status: "completed" },
+    { status: ["accepted"] }, { status: "cancelled" }, { status: "Accepted" }, { status: 1 }, { status: "accepted", technicianEmail: identities.b.email },
     { status: "accepted", role: "technician" }, { status: "rejected", customerName: "changed" }]) {
     assert.equal((await request("PATCH", "a", body)).status, 400);
   }
@@ -202,4 +202,49 @@ test("GET/PATCH database failures use safe existing error handler", async () => 
     assert.doesNotMatch(await response.text(), /private-database-details/);
   }
   assert.equal(writes, 0);
+});
+
+
+test("assigned technician completes the full pipeline and persists a positive final amount", async () => {
+  records[0].finalAmount = null;
+  for (const status of ["accepted", "in-progress", "completed"]) {
+    const response = await request("PATCH", "a", status === "completed" ? { status, finalAmount: 12.5 } : { status });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.data.status, status);
+    assert.equal(records[0].finalAmount, status === "completed" ? 12.5 : null);
+    assert.equal(records[0].paymentStatus, "unpaid");
+  }
+  assert.equal(writes, 3);
+  assert.equal((await (await request()).json()).data[0].finalAmount, 12.5);
+});
+test("completion rejects missing, nonnumeric, nonpositive and protected amounts without writes", async () => {
+  records[0].status = "in-progress";
+  for (const finalAmount of [undefined, null, "12.50", 0, -1, true, {}, []]) {
+    assert.equal((await request("PATCH", "a", { status: "completed", finalAmount })).status, 400);
+  }
+  for (const body of [{ status: "completed", finalAmount: 10, paymentStatus: "paid" },
+    { status: "accepted", finalAmount: 10 }, { status: "in-progress", finalAmount: 10 }]) {
+    assert.equal((await request("PATCH", "a", body)).status, 400);
+  }
+  assert.equal(writes, 0);
+});
+test("start/completion enforce ownership, roles, exact previous state and reject repeats", async () => {
+  for (const [status, previous] of [["in-progress", "accepted"], ["completed", "in-progress"]]) {
+    const body = status === "completed" ? { status, finalAmount: 12.5 } : { status };
+    records[0].status = previous;
+    assert.equal((await request("PATCH", "b", body)).status, 404);
+    assert.equal((await request("PATCH", "customer", body)).status, 403);
+    assert.equal((await request("PATCH", "admin", body)).status, 403);
+    assert.equal((await request("PATCH", null, body)).status, 401);
+    for (const current of ["requested", "accepted", "in-progress", "completed", "rejected", "cancelled"].filter(value => value !== previous)) {
+      records[0].status = current;
+      assert.equal((await request("PATCH", "a", body)).status, 409);
+    }
+    records[0].status = previous;
+    const responses = await Promise.all([request("PATCH", "a", body), request("PATCH", "a", body)]);
+    assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
+    assert.equal((await request("PATCH", "a", body)).status, 409);
+  }
+  assert.equal(writes, 2);
 });

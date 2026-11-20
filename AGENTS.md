@@ -510,3 +510,71 @@ remain future work. Stop after the requested phase and wait for user direction.
   Signed-in live Technician display and tool-driven live creation remain untested.
 - No dependencies, environment/auth configuration, Admin mutations, payments or
   unrelated features were added. Preserve earlier uncommitted Customer work.
+
+
+## Stripe Test Mode payment setup (2026-11-20)
+
+- Latest request explicitly authorizes full Stripe Test Mode setup and labelled
+  safe fixtures. Supersedes earlier absent-Stripe/payment notes; no real customer
+  booking/payment record or existing account role was changed by the tests.
+- CLI1.55.14 was preinstalled and browser-authorized. User-requested stripe agent
+  setup --client codex installed official plugin82fd64bc. Added official SDK23.2.0
+  (API2026-11-18.endive); no second authentication system or other dependencies.
+- Existing local test key was retained and validated read-only (livemode:false).
+  Historical rotation cannot be independently proven. Never print/copy secrets.
+  Listener script securely captures/redacts current whsec to ignored .env,
+  preserves unrelated credentials and writes CLIENT_URL=http://localhost:3000;
+  chmod600. .env.example has placeholders only. Backend reloads env on restart.
+- scripts/listen-stripe.js uses STRIPE_API_KEY via child environment, never argv,
+  so API and CLI forward the same account's test events. CLI now requires --events
+  checkout.session.completed,checkout.session.async_payment_succeeded plus
+  --forward-to localhost:4000/api/payments/webhook. Listener kept running for tests.
+- app.js mounts express.raw for POST /api/payments/webhook before global JSON.
+  config/payments.js verifies signatures/Test Mode and retrieves the real Checkout
+  Session/expanded PaymentIntent. It checks paid/complete/succeeded state,
+  booking/current customer/attempt/session linkage, MongoDB finalAmount, USD and
+  received amount. Only this path can insert verified payment + set booking paid.
+  Unrelated CLI fixture events acknowledge without booking writes. Invalid400.
+- routes/payments/routes.js provides customer-only POST /create-checkout-session,
+  GET /my and GET /session/:id using unchanged verifyToken/requireRole and trusted
+  req.user. Strict bookingId-only body; completed/unpaid/owned gate; MongoDB amount
+  converted to valid USD cents. Atomic checkout attempt claims and Stripe keys
+  reuse open sessions/renew expired ones; a completed session cannot double charge.
+  URLs derive only from CLIENT_URL. GET /status returns readiness without secrets.
+- Current Stripe API rejects payment_method_types on Checkout create, so omitted
+  in favor of Dashboard dynamic methods. adaptive_pricing.enabled=false enforces
+  USD; real hosted screen was verified USD12.50. Final key namespace is
+  fixmate-checkout-v2- plus stored UUID. Earlier invalid test payloads were cached
+  by Stripe; only unpaid fixture Sessions were expired/replaced during setup.
+- Explicit schema approval created planned payments collection plus three unique
+  partial indexes (verified:true) on bookingId/sessionId/transactionId; actual
+  session index field is stripeSessionId. Script setup-payment-indexes.js handles
+  setup, not startup. Bookings store checkoutRequestId/checkoutAmount/checkoutCurrency/
+  stripeSessionId. Payment marker fields verified/verificationSource/testMode are
+  server-only. Atomic MongoDB transaction keeps payment insert/paid update together.
+- Admin payments projects actual fields and sums verified Stripe Test Mode USD
+  records only; legacy or mixed-currency unverified rows are excluded. Customer
+  history is owner-filtered/newest first. Success redirect is read-only verification,
+  not proof or a write. Preserve new frontend narrow bridges and conditional Pay Now.
+- Full native tests131/131 passed including12 new payment fixtures and all Service/
+  Booking/Admin/Customer regressions. Covers auth/ownership, index/config failure,
+  amounts/currency, session reuse/expiry/concurrency, real SDK signature checking,
+  duplicate webhook, rollback and verified/scoped histories. Syntax checks pass.
+  Frontend TypeScript/full lint/default Turbopack build38 pages pass; browser
+  fixtures44 checks and live guest/API smoke13 checks pass. No mock result is
+  represented as a live test; additional real Test Mode checks below were executed.
+- Live CLI generic trigger was delivered HTTP200, correctly ignored for bookings.
+  New dedicated test customer +3 labelled fixture bookings enabled actual hosted
+  Stripe test-card payment USD12.50; signed webhook HTTP200 created exactly one
+  verified payment and marked only its booking paid. Event replay twice kept count1.
+  Real Customer/temporary-fixture-Admin browsers showed matching verified history.
+  Technician/Admin Checkout403 checked with only fixture role changes, then restored
+  Customer in finally. Stripe Cancel/Back returned cancel page; fixture unpaid,
+  no payment, owned verification false. Existing real identities/data unchanged.
+- One fixture customer was created; 3 fixture bookings/1 test payment remain. A
+  later read-only audit found no fixture user by ID/email; no test script deleted
+  it. Customer-role restoration and live UI verification occurred before this
+  observation. Do not assume the fixture identity still exists.
+  Secrets/test credentials are private temporary artifacts outside repositories.
+  Listener intentionally remains active; rotation history is not attested by CLI
+  validity or local .env and must not be claimed verified. See frontend AGENTS.md.

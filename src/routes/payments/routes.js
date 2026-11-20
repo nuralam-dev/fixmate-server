@@ -66,12 +66,12 @@ router.post("/create-checkout-session", async (req, res) => {
     if (!booking || !booking.checkoutRequestId || booking.checkoutAmount !== amount || booking.checkoutCurrency !== "usd") throw Object.assign(new Error("The booking changed. Refresh before paying."), { status: 409 });
     const metadata = { fixmate: "booking", bookingId: booking._id.toHexString(), checkoutRequestId: booking.checkoutRequestId };
     const checkout = await stripe.checkout.sessions.create({
-      mode: "payment", payment_method_types: ["card"], customer_email: req.user.email,
+      mode: "payment", adaptive_pricing: { enabled: false }, customer_email: req.user.email,
       client_reference_id: metadata.bookingId, metadata, payment_intent_data: { metadata },
       line_items: [{ price_data: { currency: "usd", unit_amount: amount, product_data: { name: booking.serviceTitle || "FixMate repair" } }, quantity: 1 }],
       success_url: `${clientUrl.origin}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${clientUrl.origin}/payment/cancel`,
-    }, { idempotencyKey: `fixmate-${booking.checkoutRequestId}` });
+    }, { idempotencyKey: `fixmate-checkout-v2-${booking.checkoutRequestId}` });
     if (checkout.livemode !== false || !checkout.id.startsWith("cs_test_") || !checkout.url || new URL(checkout.url).origin !== "https://checkout.stripe.com") throw new Error("Invalid test Checkout response");
     const saved = await bookingsCollection.updateOne({ ...eligible, checkoutRequestId: booking.checkoutRequestId }, { $set: { stripeSessionId: checkout.id, updatedAt: new Date() } });
     if (saved.matchedCount !== 1) throw Object.assign(new Error("Booking payment state changed. Refresh My Bookings."), { status: 409 });

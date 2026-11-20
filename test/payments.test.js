@@ -78,6 +78,8 @@ before(async () => {
   } }));
   const checkout = Object.getPrototypeOf(stripe.checkout.sessions);
   mock.method(checkout, "create", async (body, options) => {
+    assert.equal(Object.hasOwn(body, "payment_method_types"), false);
+    assert.deepEqual(body.adaptive_pricing, { enabled: false });
     assert.equal(body.line_items[0].price_data.unit_amount, 1250);
     assert.equal(body.line_items[0].price_data.currency, "usd");
     assert.equal(body.client_reference_id, id.toHexString());

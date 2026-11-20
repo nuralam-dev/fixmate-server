@@ -24,18 +24,23 @@ router.patch("/:id/status", verifyToken, requireRole("technician"), async (req, 
     return res.status(400).json({ success: false, message: "Invalid booking ID" });
   }
   const body = req.body;
+  const previous = { accepted: "requested", rejected: "requested", "in-progress": "accepted", completed: "in-progress" };
   if (!body || typeof body !== "object" || Array.isArray(body)
-    || Object.keys(body).length !== 1
-    || !["accepted", "rejected"].includes(body.status)) {
-    return res.status(400).json({ success: false, message: "Send only status: accepted or rejected" });
+    || typeof body.status !== "string" || !Object.hasOwn(previous, body.status)
+    || Object.keys(body).length !== (body.status === "completed" ? 2 : 1)
+    || Object.keys(body).some(key => !["status", ...(body.status === "completed" ? ["finalAmount"] : [])].includes(key))) {
+    return res.status(400).json({ success: false, message: "Send a valid next status and finalAmount only when completing" });
+  }
+  if (body.status === "completed" && (typeof body.finalAmount !== "number" || !Number.isFinite(body.finalAmount) || body.finalAmount <= 0)) {
+    return res.status(400).json({ success: false, message: "A valid positive finalAmount is required to complete a booking" });
   }
 
   try {
     const { bookingsCollection } = getCollections();
     const owner = { _id: new ObjectId(req.params.id), technicianEmail: req.user.email };
     const booking = await bookingsCollection.findOneAndUpdate(
-      { ...owner, status: "requested" },
-      { $set: { status: body.status, updatedAt: new Date() } },
+      { ...owner, status: previous[body.status] },
+      { $set: { status: body.status, ...(body.status === "completed" ? { finalAmount: body.finalAmount } : {}), updatedAt: new Date() } },
       { returnDocument: "after" },
     );
     if (!booking) {
