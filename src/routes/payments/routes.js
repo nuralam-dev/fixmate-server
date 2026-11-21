@@ -12,6 +12,20 @@ router.get("/status", async (req, res) => {
   try { getStripe(); res.json({ success: true, data: { available: await paymentIndexesReady() } }); }
   catch { res.json({ success: true, data: { available: false } }); }
 });
+// Keep this Technician-only read before the Customer-only payment routes.
+router.get("/technician", verifyToken, requireRole("technician"), async (req, res, next) => {
+  try {
+    const { paymentsCollection } = getCollections();
+    const stored = await paymentsCollection.find({
+      technicianEmail: req.user.email, verified: true, paymentStatus: "paid", currency: "usd",
+    }, { projection: paymentProjection }).sort({ paidAt: -1, _id: -1 }).toArray();
+    const records = stored.filter(verifiedPayment);
+    const report = paymentReport(records);
+    res.json({ success: true, message: "Your verified repair payments fetched successfully", data: {
+      ...report, totalPaidAmount: report.revenue[0]?.amount ?? 0, paidJobCount: records.length,
+    } });
+  } catch (error) { next(error); }
+});
 router.use(verifyToken, requireRole("customer"));
 router.get("/my", async (req, res, next) => {
   try {

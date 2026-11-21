@@ -614,3 +614,55 @@ remain future work. Stop after the requested phase and wait for user direction.
   Frontend actual-source handler checks23, build/TypeScript/scoped ESLint pass.
   Signed-in Customer/Admin browser UI was not independently tested with user
   credentials. See frontend AGENTS.md for full verification/remaining limitations.
+
+
+## Technician Payment History (2026-11-21)
+
+- Added read-only GET /api/payments/technician before the existing Customer gate,
+  using unchanged verifyToken then requireRole("technician"). Owner email comes
+  only from req.user; frontend query/body identities cannot alter the filter.
+- Query existing payments by technicianEmail, verified:true, paid and USD using
+  existing safe projection; sort paidAt/_id descending. Reuse verifiedPayment for
+  both trusted sources, Test Mode, valid amount and Stripe identifiers. Reuse
+  paymentReport cents-based total; add totalPaidAmount and paidJobCount. Unique
+  verified booking index keeps one record per paid job. No booking finalAmount
+  counts as revenue. No writes, Stripe calls, auth/env/schema/index changes.
+- Frontend adds protected /dashboard/technician/payments, sidebar link and narrow
+  cookie-forwarding GET bridge. Existing shared Customer/Admin history gains an
+  optional Technician presentation with USD/job totals and required table fields.
+  Stripe Checkout, webhook, fulfillment and existing payment records unchanged.
+- Full native suite147/147 passed with four new tests: Technician isolation/spoofed
+  email, verified USD filtering, source/amount validation, sorting, exact totals/
+  count, unpaid exclusion, empty zeros, 401/403, no writes and safe DB errors.
+  Existing Customer/Admin history and all Stripe/recovery regressions pass.
+- Real MongoDB read-only query found4 verified payments across3 owner emails;
+  all linked bookings were completed/paid. No test records were created/changed.
+  Actual-component browser fixtures38 checks and local guest smoke5 checks pass;
+  scoped frontend lint/TypeScript and backend syntax/whitespace checks pass.
+  Browser fixtures are not live authenticated MongoDB tests. No Vercel deployment
+  was requested/performed. See frontend AGENTS.md for UI/verification details.
+
+
+## Local development origins (2026-11-21)
+
+- Confirmed localhost BetterAuth INVALID_ORIGIN403 because frontend auth URL was
+  production. Backend .env CLIENT_URL was production too; local CORS named that
+  HTTPS origin. Initial homepage/services were already200; generic500 was not
+  reproduced and no stack for it was available. Do not conflate the two errors.
+- Added ignored .env.development.local with CLIENT_URL and BETTER_AUTH_URL set to
+  http://localhost:3000. npm run dev now loads that optional file with Node's
+  --env-file-if-exists flag before --watch index.js. Existing dotenv still loads
+  secrets from .env without overriding the dev origins. No dependency or core
+  startup/auth/CORS/Stripe code changed. npm start/Vercel settings are unchanged.
+- Stopped only the verified old FixMate nodemon watcher and started npm run dev.
+  Native MongoDB connect/ping and4000 listen passed; exact fixmateDB unchanged.
+  Local CORS now names localhost:3000 and credentials:true; no wildcard introduced.
+  Use npm run dev rather than direct nodemon index.js for the local override.
+- Frontend has separate dev-only auth/API origins; production env files/secrets
+  remain intact. Local malformed-credential signin now reaches401 rather than
+  INVALID_ORIGIN403, untrusted origins remain403 and session guest read works.
+  Removed frontend signup success-response logging to prevent token disclosure.
+- Local HTTP15 checks and backend regression147/147 pass. Existing three-role
+  guards remain; full signed-in role browsers were not independently exercised.
+  No account/booking/payment/schema write, Stripe change or deployment occurred.
+  See frontend AGENTS.md for full diagnosis and verification limits.

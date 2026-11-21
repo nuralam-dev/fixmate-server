@@ -15,6 +15,7 @@ const users = {
   a: { id: "customer-a", email: "a@example.test", name: "Customer A", role: "customer" },
   b: { id: "customer-b", email: "b@example.test", name: "Customer B", role: "customer" },
   technician: { id: "tech", email: "tech@example.test", name: "Technician", role: "technician" },
+  technicianB: { id: "tech-b", email: "tech-b@example.test", name: "Technician B", role: "technician" },
   admin: { id: "admin", email: "admin@example.test", name: "Admin", role: "admin" },
 };
 function match(record, filter) {
@@ -264,4 +265,49 @@ test("payment status read denies guests and non-Customer roles before DB reads",
     assert.equal((await request(`booking/${id}`, who, undefined, "GET")).status, status);
   }
   assert.equal(calls, 0);
+});
+
+
+test("Technician history denies guests, invalid/expired sessions, Customer and Admin before DB", async () => {
+  for (const [who, status] of [[null, 401], ["invalid", 401], ["expired", 401], ["a", 403], ["admin", 403]]) {
+    const r = await request("technician", who, undefined, "GET");
+    assert.equal(r.status, status); assert.match(r.headers.get("Cache-Control"), /private, no-store/);
+  }
+  assert.equal(calls, 0);
+});
+test("Technician sees only own verified USD paid jobs, newest first, with exact totals and no writes", async () => {
+  const checkout = await paidCheckout(); await webhook(checkout);
+  const original = payments[0]; original.paidAt = new Date("2026-01-01");
+  const make = (fields) => ({ ...original, _id: new ObjectId(), bookingId: new ObjectId().toString(), ...fields });
+  payments.push(make({ amount: 0.1, transactionId: "pi_one", stripeSessionId: "cs_test_one", paidAt: new Date("2026-02-01"), verificationSource: "stripe-api" }),
+    make({ amount: 0.2, transactionId: "pi_two", stripeSessionId: "cs_test_two", paidAt: new Date("2026-03-01") }),
+    make({ amount: 900, technicianEmail: users.technicianB.email }),
+    make({ verified: false }), make({ paymentStatus: "unpaid" }), make({ paymentStatus: "pending" }),
+    make({ currency: "bdt" }), make({ verificationSource: "unknown" }), make({ testMode: false }),
+    make({ amount: -10 }), make({ transactionId: "untrusted" }), make({ stripeSessionId: "cs_live_invalid" }));
+  records.push({ _id: new ObjectId(), status: "completed", paymentStatus: "unpaid", finalAmount: 10000, technicianEmail: users.technician.email });
+  const before = JSON.stringify({ records, payments });
+  const r = await request("technician?technicianEmail=tech-b@example.test&verified=false", "technician", undefined, "GET");
+  assert.equal(r.status, 200); assert.match(r.headers.get("Cache-Control"), /private, no-store/);
+  const report = (await r.json()).data;
+  assert.deepEqual(report.records.map(p => p.amount), [0.2, 0.1, 12.5]);
+  assert.ok(report.records.every(p => p.technicianEmail === users.technician.email));
+  assert.equal(report.totalPaidAmount, 12.8); assert.equal(report.paidJobCount, 3);
+  assert.deepEqual(report.revenue, [{ currency: "usd", amount: 12.8 }]);
+  const other = (await (await request("technician?technicianEmail=tech@example.test", "technicianB", undefined, "GET")).json()).data;
+  assert.equal(other.records.length, 1); assert.equal(other.totalPaidAmount, 900); assert.equal(other.paidJobCount, 1);
+  assert.equal(JSON.stringify({ records, payments }), before); assert.equal(created, 1);
+});
+test("Technician empty history has zero total/count and does not require Stripe configuration", async () => {
+  process.env.STRIPE_SECRET_KEY = "";
+  try {
+    const r = await request("technician", "technician", undefined, "GET");
+    assert.equal(r.status, 200); const report = (await r.json()).data;
+    assert.deepEqual(report.records, []); assert.equal(report.totalPaidAmount, 0); assert.equal(report.paidJobCount, 0);
+    assert.deepEqual(report.revenue, []);
+  } finally { process.env.STRIPE_SECRET_KEY = "sk_test_fixture"; }
+});
+test("Technician history database failures return safe errors", async () => {
+  failDB = true; const r = await request("technician", "technician", undefined, "GET");
+  assert.equal(r.status, 500); assert.doesNotMatch(await r.text(), /private-db-details/);
 });
