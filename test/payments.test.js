@@ -152,7 +152,7 @@ test("Checkout uses DB amount, stores server linkage, reuses sessions and preven
 });
 test("expired Checkout can be renewed but completed Checkout cannot double charge", async () => {
   await request(); [...sessions.values()][0].status = "expired"; assert.equal((await request()).status, 200); assert.equal(created, 2);
-  [...sessions.values()][1].status = "complete"; assert.equal((await request()).status, 409); assert.equal(created, 2);
+  [...sessions.values()][1].status = "complete"; [...sessions.values()][1].payment_intent.status = "processing"; assert.equal((await request()).status, 409); assert.equal(created, 2);
 });
 test("payment setup missing, live key/response and DB failures fail closed", async () => {
   ready = false; assert.equal((await request()).status, 503); ready = true;
@@ -179,7 +179,7 @@ test("repeated and concurrent webhook deliveries never duplicate payments", asyn
 });
 test("amount/currency/customer/metadata/session mismatches and unpaid intents cannot mark paid", async () => {
   for (const change of [c => c.amount_total++, c => c.currency = "bdt", c => c.customer_email = users.b.email,
-    c => c.metadata.checkoutRequestId = "foreign", c => c.client_reference_id = "foreign", c => c.payment_status = "unpaid",
+    c => c.metadata.checkoutRequestId = "foreign", c => c.client_reference_id = "foreign",
     c => c.payment_intent.status = "processing", c => c.payment_intent.amount_received = 1, c => c.payment_intent.livemode = true]) {
     sessions = new Map(); records[0] = { ...records[0], paymentStatus: "unpaid" }; delete records[0].stripeSessionId; delete records[0].checkoutRequestId;
     const checkout = await paidCheckout(); change(checkout); assert.equal((await webhook(checkout)).status, 400); assert.equal(payments.length, 0); assert.equal(records[0].paymentStatus, "unpaid");
@@ -197,4 +197,71 @@ test("Customer history/session read is owner-scoped and admin reports verified t
   payments.push({ _id: new ObjectId(), amount: 999, currency: "usd", paymentStatus: "paid", customerEmail: users.a.email });
   r = await fetch(base + "/api/admin/payments", { headers: { Cookie: "fixture=admin" } }); report = (await r.json()).data;
   assert.equal(report.records.length, 2); assert.deepEqual(report.revenue, [{ currency: "usd", amount: 12.5 }]);
+});
+
+test("successful Stripe payment missing webhook is reconciled on status read without another charge", async () => {
+  const checkout = await paidCheckout();
+  assert.equal(payments.length, 0);
+  assert.equal((await request(`booking/${id}`, "b", undefined, "GET")).status, 404);
+  const r = await request(`booking/${id}`, "a", undefined, "GET");
+  assert.equal(r.status, 200); assert.equal((await r.json()).data.paid, true);
+  assert.equal(payments.length, 1); assert.equal(payments[0].verificationSource, "stripe-api");
+  assert.equal(records[0].paymentStatus, "paid"); assert.equal(created, 1);
+  const history = (await (await request("my", "a", undefined, "GET")).json()).data;
+  assert.equal(history.records.length, 1); assert.deepEqual(history.revenue, [{ currency: "usd", amount: 12.5 }]);
+  const admin = await fetch(base + "/api/admin/payments", { headers: { Cookie: "fixture=admin" } });
+  assert.deepEqual((await admin.json()).data.revenue, [{ currency: "usd", amount: 12.5 }]);
+  assert.equal((await webhook(checkout)).status, 200); assert.equal(payments.length, 1);
+});
+test("Pay Now reconciles a paid Session and never creates a second charge", async () => {
+  await paidCheckout(); const r = await request();
+  assert.equal(r.status, 200); assert.equal((await r.json()).data.paid, true);
+  assert.equal(created, 1); assert.equal(payments.length, 1);
+});
+test("processing and unknown intents remain locked; Stripe failures cannot unlock", async () => {
+  await request(); const checkout = [...sessions.values()][0]; checkout.status = "complete";
+  for (const status of ["processing", "requires_action", "requires_capture", "unknown"] ) {
+    checkout.payment_intent.status = status;
+    const r = await request(); assert.equal(r.status, 409); assert.equal((await r.json()).code, "PAYMENT_PROCESSING");
+    const read = await request(`booking/${id}`, "a", undefined, "GET"); assert.equal((await read.json()).data.state, "processing");
+    assert.equal(created, 1); assert.equal(payments.length, 0);
+  }
+  sessions.clear(); assert.equal((await request()).status, 503); assert.equal(records[0].checkoutRequestId, checkout.metadata.checkoutRequestId);
+});
+test("failed async Checkout can retry only after trusted terminal failure", async () => {
+  await request(); const checkout = [...sessions.values()][0]; checkout.status = "complete"; checkout.payment_intent.status = "requires_payment_method";
+  assert.equal((await request()).status, 200); assert.equal(created, 2); assert.equal(payments.length, 0);
+});
+test("mismatched stored session never unlocks, redirects, reconciles or charges", async () => {
+  for (const change of [c => c.currency = "bdt", c => c.metadata.bookingId = new ObjectId().toString(), c => c.customer_email = users.b.email, c => c.amount_total = 1]) {
+    sessions = new Map(); records[0] = { ...records[0], paymentStatus: "unpaid" }; delete records[0].stripeSessionId; delete records[0].checkoutRequestId;
+    await request(); const checkout = [...sessions.values()][0]; change(checkout);
+    const count = created; assert.equal((await request()).status, 409); assert.equal(created, count); assert.equal(payments.length, 0);
+  }
+});
+test("signed unpaid async completion is acknowledged without fulfillment until success", async () => {
+  await request(); const checkout = [...sessions.values()][0]; checkout.status = "complete"; checkout.payment_intent.status = "processing";
+  assert.equal((await webhook(checkout)).status, 200); assert.equal(payments.length, 0); assert.equal(records[0].paymentStatus, "unpaid");
+  checkout.payment_status = "paid"; checkout.payment_intent.status = "succeeded"; checkout.payment_intent.amount_received = 1250;
+  assert.equal((await webhook(checkout, { type: "checkout.session.async_payment_succeeded" })).status, 200); assert.equal(payments.length, 1);
+});
+test("existing matching verified payment repairs unpaid booking without inserting duplicates", async () => {
+  await paidCheckout(); await request(`booking/${id}`, "a", undefined, "GET");
+  records[0].paymentStatus = "unpaid";
+  const r = await request(`booking/${id}`, "a", undefined, "GET"); assert.equal((await r.json()).data.paid, true);
+  assert.equal(payments.length, 1); assert.equal(created, 1);
+});
+
+test("old reservation without a stored Session fails closed beyond Stripe idempotency retention", async () => {
+  records[0].checkoutRequestId = "old-attempt";
+  assert.equal((await request()).status, 409); assert.equal(created, 0);
+  records[0].checkoutStartedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
+  assert.equal((await request()).status, 409); assert.equal(created, 0);
+});
+
+test("payment status read denies guests and non-Customer roles before DB reads", async () => {
+  for (const [who, status] of [[null, 401], ["expired", 401], ["technician", 403], ["admin", 403]]) {
+    assert.equal((await request(`booking/${id}`, who, undefined, "GET")).status, status);
+  }
+  assert.equal(calls, 0);
 });

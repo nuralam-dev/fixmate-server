@@ -578,3 +578,39 @@ remain future work. Stop after the requested phase and wait for user direction.
   Secrets/test credentials are private temporary artifacts outside repositories.
   Listener intentionally remains active; rotation history is not attested by CLI
   validity or local .env and must not be claimed verified. See frontend AGENTS.md.
+
+
+## Stripe paid-session recovery and production webhook (2026-11-21)
+
+- Current user authorizes repair of the existing $200 payment and Vercel rollout.
+  Supersedes earlier webhook-only fulfillment notes. BetterAuth/roles are unchanged.
+- Stripe confirmed the affected Session complete/paid and PaymentIntent succeeded
+  for 20000 USD cents, with matching owner/booking/attempt metadata. MongoDB was
+  unpaid with no payment. No registered webhook endpoint existed; production held
+  the local CLI secret. Historical Session return URLs pointed to localhost; the
+  current production CLIENT_URL is already correct. No new charge was created.
+- config/payments.js shares full trusted Stripe checks and MongoDB transactional
+  fulfillment across webhook and authenticated stripe-api reconciliation. Both
+  verification sources count in paymentReport. Exact matching existing payments
+  repair unpaid state without insertion. API recovery uses Stripe charge paidAt.
+- routes/payments/routes.js adds owned Customer GET /booking/:id, upgrades owned
+  /session/:id and reconciles paid Sessions on Checkout POST. Pending/unknown
+  intents remain locked; only verified expired/terminal-failed attempts can renew.
+  Open Sessions reuse existing URLs. checkoutStartedAt bounds unsaved-Session
+  retries; old/missing timestamps fail closed beyond idempotency retention.
+- Preserve raw webhook parser, signature verification, strict Test Mode, MongoDB
+  amount/ownership/attempt/session/intent checks and all three unique indexes.
+  Async unpaid completion acknowledges processing; async success fulfills. Safe
+  event ID/type/status failure logs contain no credentials or raw Stripe errors.
+- Enabled production Stripe Test endpoint /api/payments/webhook for completed and
+  async_payment_succeeded; securely updated Vercel production signing secret and
+  deployed existing backend/frontend aliases. Local .env and listener unchanged.
+- Production authenticated Checkout POST returned200 and recovered source stripe-api;
+  booking now paid and exactly one verified USD200 payment exists. Stripe CLI
+  resent the actual original event twice; real webhook delivery200, invalid
+  signature400. Post-replay read verifies no duplicate and correct Customer/Admin
+  report inclusion. No fake payment, second charge or unrelated record mutation.
+- Native suite143/143, syntax/whitespace checks and deployed smoke checks pass.
+  Frontend actual-source handler checks23, build/TypeScript/scoped ESLint pass.
+  Signed-in Customer/Admin browser UI was not independently tested with user
+  credentials. See frontend AGENTS.md for full verification/remaining limitations.

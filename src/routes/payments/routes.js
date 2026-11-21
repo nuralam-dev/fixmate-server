@@ -4,7 +4,7 @@ import { ObjectId } from "mongodb";
 import { getCollections } from "../../config/db.js";
 import { verifyToken } from "../../middleware/verifyToken.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getStripe, minorAmount, paymentError, paymentIndexesReady, paymentProjection, paymentReport, verifiedPayment } from "../../config/payments.js";
+import { checkoutState, getStripe, minorAmount, paymentError, paymentIndexesReady, paymentProjection, paymentReport, verifiedPayment } from "../../config/payments.js";
 
 const router = Router();
 router.get("/status", async (req, res) => {
@@ -20,15 +20,27 @@ router.get("/my", async (req, res, next) => {
     res.json({ success: true, data: paymentReport(records) });
   } catch (error) { next(error); }
 });
-router.get("/session/:id", async (req, res, next) => {
+// Both reads verify with Stripe before reporting paid; a redirect is never proof.
+async function verificationResult(booking, res) {
+  if (!booking) return res.status(404).json({ success: false, message: "Payment booking not found" });
+  const { paymentsCollection } = getCollections();
+  const { state } = await checkoutState(booking);
+  const payment = state === "paid" ? await paymentsCollection.findOne({ bookingId: booking._id.toHexString(), customerEmail: booking.customerEmail, verified: true }, { projection: paymentProjection }) : null;
+  res.json({ success: true, data: { state, paid: state === "paid" && !!payment && verifiedPayment(payment), payment: payment && verifiedPayment(payment) ? payment : null } });
+}
+router.get("/booking/:id", async (req, res) => {
+  if (!/^[a-f\d]{24}$/i.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid booking ID" });
+  try {
+    const { bookingsCollection } = getCollections();
+    await verificationResult(await bookingsCollection.findOne({ _id: new ObjectId(req.params.id), customerEmail: req.user.email }), res);
+  } catch (error) { paymentError(res, error); }
+});
+router.get("/session/:id", async (req, res) => {
   if (!/^cs_test_[A-Za-z0-9]+$/.test(req.params.id) || req.params.id.length > 250) return res.status(400).json({ success: false, message: "Invalid Checkout Session ID" });
   try {
-    const { bookingsCollection, paymentsCollection } = getCollections();
-    const booking = await bookingsCollection.findOne({ stripeSessionId: req.params.id, customerEmail: req.user.email });
-    if (!booking) return res.status(404).json({ success: false, message: "Payment session not found" });
-    const payment = await paymentsCollection.findOne({ bookingId: booking._id.toHexString(), stripeSessionId: req.params.id, customerEmail: req.user.email, verified: true }, { projection: paymentProjection });
-    res.json({ success: true, data: { paid: booking.paymentStatus === "paid" && !!payment && verifiedPayment(payment), payment: payment && verifiedPayment(payment) ? payment : null } });
-  } catch (error) { next(error); }
+    const { bookingsCollection } = getCollections();
+    await verificationResult(await bookingsCollection.findOne({ stripeSessionId: req.params.id, customerEmail: req.user.email }), res);
+  } catch (error) { paymentError(res, error); }
 });
 router.post("/create-checkout-session", async (req, res) => {
   if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length !== 1 || !ObjectId.isValid(req.body.bookingId)) {
@@ -45,22 +57,16 @@ router.post("/create-checkout-session", async (req, res) => {
     const amount = minorAmount(booking.finalAmount);
     const clientUrl = new URL(process.env.CLIENT_URL || "http://localhost:3000");
     if (!["http:", "https:"].includes(clientUrl.protocol) || clientUrl.pathname !== "/" || (process.env.NODE_ENV === "production" && clientUrl.protocol !== "https:")) throw new Error("Invalid frontend origin");
-    let previous;
-    if (booking.stripeSessionId) {
-      previous = await stripe.checkout.sessions.retrieve(booking.stripeSessionId);
-      if (previous.livemode !== false || previous.metadata?.checkoutRequestId !== booking.checkoutRequestId) throw new Error("Invalid stored session");
-      if (previous.status !== "expired") {
-        if (previous.status === "open" && previous.amount_total === amount && previous.url && booking.checkoutAmount === amount) {
-          return res.json({ success: true, data: { url: previous.url } });
-        }
-        throw Object.assign(new Error("A Checkout payment is already processing. Refresh My Bookings after verification."), { status: 409 });
-      }
-    }
+    const current = await checkoutState(booking);
+    if (current.state === "paid") return res.json({ success: true, data: { paid: true, state: "paid" } });
+    if (current.state === "processing") return res.status(409).json({ success: false, code: "PAYMENT_PROCESSING", message: "Payment is processing. Check its status before trying again." });
+    if (current.state === "open") return res.json({ success: true, data: { url: current.checkout.url } });
+    const previous = current.checkout;
     const eligible = { ...owner, status: "completed", paymentStatus: "unpaid", finalAmount: booking.finalAmount };
-    if (!booking.checkoutRequestId || previous?.status === "expired") {
+    if (!booking.checkoutRequestId || previous && current.state === "retry") {
       const updated = await bookingsCollection.findOneAndUpdate({
         ...eligible, ...(booking.checkoutRequestId ? { checkoutRequestId: booking.checkoutRequestId, stripeSessionId: booking.stripeSessionId } : { checkoutRequestId: { $exists: false } }),
-      }, { $set: { checkoutRequestId: randomUUID(), checkoutAmount: amount, checkoutCurrency: "usd" }, $unset: { stripeSessionId: "" } }, { returnDocument: "after" });
+      }, { $set: { checkoutRequestId: randomUUID(), checkoutAmount: amount, checkoutCurrency: "usd", checkoutStartedAt: new Date() }, $unset: { stripeSessionId: "" } }, { returnDocument: "after" });
       booking = updated || await bookingsCollection.findOne(eligible);
     }
     if (!booking || !booking.checkoutRequestId || booking.checkoutAmount !== amount || booking.checkoutCurrency !== "usd") throw Object.assign(new Error("The booking changed. Refresh before paying."), { status: 409 });
